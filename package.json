@@ -2,8 +2,12 @@
   "name": "cheappplanet-whatsapp-bot",
   "version": "7.0.0",
   "main": "bot.js",
-  "engines": { "node": "20.x" },
-  "scripts": { "start": "node bot.js" },
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "start": "node bot.js"
+  },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.8",
     "qrcode-terminal": "^0.12.0",

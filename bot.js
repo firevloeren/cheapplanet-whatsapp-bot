@@ -1,41 +1,54 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
-const express = require('express');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys'); const qrcode = require('qrcode-terminal'); const express = require('express'); const P = require('pino');
+const app = express(); app.get('/', (req, res) => res.send('Bot V7 Baileys online - ' + new Date().toISOString())); const PORT = process.env.PORT || 3000; app.listen(PORT, () => console.log('Webserver V7 online op ' + PORT));
+async function startBot() { const { state, saveCreds } = await useMultiFileAuthState('/tmp/baileys_auth');
+const sock = makeWASocket({
+    auth: state,
+    logger: P({ level: 'silent' }),
+    printQRInTerminal: false
+});
 
-const app = express();
-app.get('/', (req, res) => res.send('Bot V6 online - ' + new Date().toISOString()));
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Webserver V6 online op ' + PORT));
+sock.ev.on('creds.update', saveCreds);
 
-console.log('Starting client V6');
-
-const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: '/tmp/auth' }),
-    puppeteer: {
-        headless: true,
-        args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--single-process','--no-zygote','--disable-gpu'],
+sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) {
+        console.log('===== QR CODE SCAN NU =====');
+        qrcode.generate(qr, { small: true });
+        console.log('===== EINDE QR =====');
+    }
+    if (connection === 'close') {
+        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+        console.log('Verbinding gesloten, reconnect:', shouldReconnect);
+        if (shouldReconnect) startBot();
+    } else if (connection === 'open') {
+        console.log('===== BOT V7 READY! =====');
     }
 });
 
-client.on('qr', (qr) => {
-    console.log('===== QR CODE - SCAN NU =====');
-    qrcode.generate(qr, { small: true });
-    console.log('===== EINDE QR =====');
-});
+sock.ev.on('messages.upsert', async ({ messages }) => {
+    for (const msg of messages) {
+        if (!msg.message || msg.key.fromMe) continue;
+        const from = msg.key.remoteJid;
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        console.log('Bericht van ' + from + ': ' + text);
+        
+        // Alleen jij mag commands sturen (030 nummer = 7850843)
+        if (!from.includes('7850843') && !from.includes('31433998066')) continue;
 
-client.on('ready', () => {
-    console.log('===== BOT IS READY V6! =====');
+        if (text.toLowerCase().includes('lijst klanten')) {
+            await sock.sendMessage(from, { text: '📋 Klanten:\n- klant A\n- klant B\nStuur: verander website klant A naar rood' });
+        } else if (text.toLowerCase().includes('verander website')) {
+            await sock.sendMessage(from, { text:
+const { default: mak
+const sock = makeWASocket({
+    auth: state,
+    logger: P({ le});
+        } else {
+            await sock.sendMessage(from, { text:
+ ✅ Bot V7 werkt! Je stuurde: ${text}\n\nProbeer: lijst klanten 
 });
-
-client.on('message', async (msg) => {
-    console.log('Bericht van: ' + msg.from + ' -> ' + msg.body);
-    if (!msg.from.includes('7850843')) return;
-    if (msg.body.toLowerCase().includes('help')) {
-        msg.reply('🤖 Bot V6 werkt! Probeer: verander website klant 1 naar rood');
-    } else {
-        msg.reply('✅ Ontvangen: ' + msg.body);
+        }
     }
 });
-
-client.initialize().catch(e=>console.error('Init error V6', e));
-setInterval(()=>console.log('Heartbeat V6 - ' + new Date().toISOString()), 30000);
+}
+startBot(); setInterval(()=>console.log('Heartbeat V7 - ' + new Date().toISOString()), 30000);

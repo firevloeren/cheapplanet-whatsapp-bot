@@ -3,61 +3,39 @@ const qrcode = require('qrcode-terminal');
 const express = require('express');
 
 const app = express();
-app.get('/', (req, res) => res.send('Bot V5 online - ' + new Date().toISOString()));
-app.get('/qr', (req, res) => res.send('Check logs voor QR'));
+app.get('/', (req, res) => res.send('Bot V6 online - ' + new Date().toISOString()));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Webserver V5 online op ' + PORT));
+app.listen(PORT, () => console.log('Webserver V6 online op ' + PORT));
 
-console.log('Starting client V5 - using bundled chromium');
+console.log('Starting client V6');
 
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '/tmp/auth' }),
     puppeteer: {
         headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu',
-            '--no-sandbox'
-        ]
+        args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--single-process','--no-zygote','--disable-gpu'],
     }
 });
 
 client.on('qr', (qr) => {
-    console.log('====================================');
-    console.log('QR CODE HIERONDER - SCAN MET 06 NUMMER:');
-    console.log('====================================');
+    console.log('===== QR CODE - SCAN NU =====');
     qrcode.generate(qr, { small: true });
-    console.log(qr);
-    console.log('====================================');
+    console.log('===== EINDE QR =====');
 });
 
 client.on('ready', () => {
-    console.log('===== BOT IS READY! =====');
-    console.log('06 nummer gekoppeld!');
+    console.log('===== BOT IS READY V6! =====');
 });
 
-client.on('auth_failure', (m) => console.error('Auth fail', m));
-client.on('disconnected', (r) => console.log('Disconnected', r));
-
 client.on('message', async (msg) => {
+    console.log('Bericht van: ' + msg.from + ' -> ' + msg.body);
     if (!msg.from.includes('7850843')) return;
-    console.log('CMD van baas: ' + msg.body);
     if (msg.body.toLowerCase().includes('help')) {
-        msg.reply('Bot V5 werkt! Stuur: verander website klant 1 naar rood');
-    } else if (msg.body.toLowerCase().includes('verander')) {
-        msg.reply('Website kleur aangepast! (demo V5)');
+        msg.reply('🤖 Bot V6 werkt! Probeer: verander website klant 1 naar rood');
+    } else {
+        msg.reply('✅ Ontvangen: ' + msg.body);
     }
 });
 
-client.initialize().then(()=>console.log('Initialize gestart V5')).catch(e=>{
-    console.error('Init error V5:', e.message);
-    console.error(e.stack);
-});
-
-setInterval(()=>console.log('Heartbeat V5 - ' + new Date().toISOString()), 30000);
+client.initialize().catch(e=>console.error('Init error V6', e));
+setInterval(()=>console.log('Heartbeat V6 - ' + new Date().toISOString()), 30000);

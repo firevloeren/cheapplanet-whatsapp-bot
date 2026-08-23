@@ -1,157 +1,386 @@
-error?.statusCode;
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason
+} = require('@whiskeysockets/baileys');
 
-      console.log('');
-      console.log('⚠️ WhatsApp verbinding gesloten');
-      console.log('Statuscode:', statusCode || 'onbekend');
+const qrcode = require('qrcode-terminal');
+const express = require('express');
+const pino = require('pino');
+const fs = require('fs');
+const path = require('path');
 
-      if (lastDisconnect?.error) {
-        console.log(
-          'Reden:',
-          lastDisconnect.error?.message ||
-          String(lastDisconnect.error)
-        );
-      }
+const VERSION = 'V9-FATHERBOT-BRIDGE';
 
-      const loggedOut =
-        statusCode === DisconnectReason.loggedOut;
+const AUTH_DIR =
+  process.env.AUTH_DIR ||
+  path.join(__dirname, 'baileys_auth');
 
-      if (loggedOut) {
-        console.log('');
-        console.log('❌ WhatsApp sessie is uitgelogd.');
-        console.log('➡️ Er is opnieuw een QR-scan nodig.');
-        console.log('');
-        return;
-      }
+const FATHERBOT_BRIDGE_URL =
+  (process.env.FATHERBOT_BRIDGE_URL || '').trim();
 
-      console.log('🔄 Automatisch opnieuw verbinden...');
-      scheduleReconnect(5000);
-    }
+const WHATSAPP_BRIDGE_SECRET =
+  (process.env.WHATSAPP_BRIDGE_SECRET || '').trim();
 
-  } catch (error) {
-    console.error(
-      '❌ connection.update fout:',
-      error?.message || error
-    );
+fs.mkdirSync(AUTH_DIR, { recursive: true });
+
+// ======================================================
+// RENDER WEBSERVER
+// ======================================================
+
+const app = express();
+
+app.get('/', (_, res) =>
+  res.send(
+    `WhatsApp ${VERSION} online - ${new Date().toISOString()}`
+  )
+);
+
+app.get('/health', (_, res) =>
+  res.json({
+    status: 'ok',
+    version: VERSION
+  })
+);
+
+app.listen(
+  process.env.PORT || 3000,
+  () => console.log(`Webserver ${VERSION} online`)
+);
+
+// ======================================================
+// RECONNECT
+// ======================================================
+
+let reconnectTimer = null;
+let starting = false;
+
+function reconnect(delay = 5000) {
+  if (reconnectTimer) return;
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    startBot();
+  }, delay);
+}
+
+// ======================================================
+// FATHERBOT BRIDGE
+// ======================================================
+
+async function askFatherBot(from, text) {
+  if (!FATHERBOT_BRIDGE_URL || !WHATSAPP_BRIDGE_SECRET) {
+    return '❌ FatherBot bridge is nog niet ingesteld in Render.';
   }
-});
 
-// ==================================================
-// BERICHTEN
-// ==================================================
+  const controller = new AbortController();
 
-sock.ev.on('messages.upsert', async (event) => {
+  const timer = setTimeout(
+    () => controller.abort(),
+    190000
+  );
+
   try {
-    const messages = event?.messages || [];
+    const response = await fetch(
+      FATHERBOT_BRIDGE_URL,
+      {
+        method: 'POST',
 
-    for (const msg of messages) {
-      try {
-        if (!msg) continue;
-        if (!msg.message) continue;
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization':
+            `Bearer ${WHATSAPP_BRIDGE_SECRET}`
+        },
 
-        // Geen reactie op eigen berichten
-        if (msg.key?.fromMe) {
-          continue;
-        }
+        body: JSON.stringify({
+          from,
+          text
+        }),
 
-        const from = msg.key?.remoteJid;
-
-        if (!from) {
-          continue;
-        }
-
-        // WhatsApp statusmeldingen overslaan
-        if (from === 'status@broadcast') {
-          continue;
-        }
-
-        const text =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
-          msg.message?.imageMessage?.caption ||
-          msg.message?.videoMessage?.caption ||
-          '';
-
-        console.log('');
-        console.log('📩 Nieuw WhatsApp bericht');
-        console.log('Van:', from);
-        console.log('Tekst:', text || '[geen tekst]');
-
-        // Geen tekst? Dan niets terugsturen.
-        if (!text) {
-          continue;
-        }
-
-        const lowerText = text
-          .trim()
-          .toLowerCase();
-
-        // TESTCOMMANDO: LIJST
-        if (lowerText.includes('lijst')) {
-          await sock.sendMessage(from, {
-            text:
-              '📋 Klanten\n\n' +
-              '• Klant A\n' +
-              '• Klant B\n\n' +
-              `✅ WhatsApp Bot ${VERSION}`
-          });
-
-          continue;
-        }
-
-        // TESTCOMMANDO: TEST
-        if (
-          lowerText === 'test' ||
-          lowerText === '/test'
-        ) {
-          await sock.sendMessage(from, {
-            text:
-             
- ✅ ${VERSION} werkt!\n\n 
-+
-              'WhatsApp is succesvol gekoppeld.'
-          });
-
-          continue;
-        }
-
-        // STANDAARD TESTANTWOORD
-        await sock.sendMessage(from, {
-          text:
-           
- ✅ ${VERSION} werkt!\n\n 
-+
-           
- Je stuurde:\n${text}
-        });
-
-      } catch (messageError) {
-        console.error('');
-        console.error('❌ Bericht verwerken mislukt:');
-        console.error(
-          messageError?.message ||
-          messageError
-        );
-
-        // Belangrijk:
-        // één slecht bericht mag de hele bot niet stoppen
-        continue;
+        signal: controller.signal
       }
+    );
+
+    const data =
+      await response
+        .json()
+        .catch(() => ({}));
+
+    if (!response.ok) {
+      return (
+        data.reply ||
+        `❌ FatherBot HTTP ${response.status}`
+      );
     }
 
-  } catch (error) {
-    console.error(
-      '❌ messages.upsert fout:',
-      error?.message || error
+    return (
+      data.reply ||
+      '✅ FatherBot heeft het bericht verwerkt.'
     );
+
+  } catch (err) {
+    console.error(
+      'FatherBot bridge fout:',
+      err?.message || err
+    );
+
+    return (
+      '❌ FatherBot kon nu niet worden bereikt. ' +
+      'Probeer het opnieuw.'
+    );
+
+  } finally {
+    clearTimeout(timer);
   }
-});
-} catch (error) { console.error(''); console.error(❌ ${VERSION} STARTFOUT); console.error(error);
-scheduleReconnect(10000);
-} finally { starting = false; } }
-// ====================================================== // START // ======================================================
+}
+
+// ======================================================
+// WHATSAPP START
+// ======================================================
+
+async function startBot() {
+  if (starting) return;
+
+  starting = true;
+
+  try {
+    const {
+      state,
+      saveCreds
+    } = await useMultiFileAuthState(AUTH_DIR);
+
+    const sock = makeWASocket({
+      auth: state,
+
+      logger: pino({
+        level: 'silent'
+      }),
+
+      printQRInTerminal: false,
+
+      markOnlineOnConnect: false,
+
+      syncFullHistory: false
+    });
+
+    // Auth/sessie bewaren
+    sock.ev.on(
+      'creds.update',
+      saveCreds
+    );
+
+    // ==================================================
+    // VERBINDING
+    // ==================================================
+
+    sock.ev.on(
+      'connection.update',
+      ({
+        connection,
+        lastDisconnect,
+        qr
+      }) => {
+
+        if (qr) {
+          console.log(
+            '===== QR CODE SCAN NU ====='
+          );
+
+          qrcode.generate(
+            qr,
+            { small: true }
+          );
+
+          console.log(
+            '===== EINDE QR ====='
+          );
+        }
+
+        if (connection === 'open') {
+          console.log(
+            `===== ${VERSION} READY =====`
+          );
+        }
+
+        if (connection === 'close') {
+
+          const code =
+            lastDisconnect
+              ?.error
+              ?.output
+              ?.statusCode ||
+            lastDisconnect
+              ?.error
+              ?.statusCode;
+
+          if (
+            code !==
+            DisconnectReason.loggedOut
+          ) {
+            reconnect();
+
+          } else {
+            console.log(
+              'WhatsApp is uitgelogd; ' +
+              'nieuwe QR-scan vereist.'
+            );
+          }
+        }
+      }
+    );
+
+    // ==================================================
+    // WHATSAPP BERICHTEN
+    // ==================================================
+
+    sock.ev.on(
+      'messages.upsert',
+      async ({ messages }) => {
+
+        for (
+          const msg of messages || []
+        ) {
+
+          try {
+            // Geen leeg bericht
+            // en geen eigen berichten
+            if (
+              !msg?.message ||
+              msg.key?.fromMe
+            ) {
+              continue;
+            }
+
+            const from =
+              msg.key?.remoteJid;
+
+            if (
+              !from ||
+              from === 'status@broadcast'
+            ) {
+              continue;
+            }
+
+            // Tekst uit verschillende
+            // WhatsApp berichttypen halen
+            const text =
+              msg.message?.conversation ||
+
+              msg.message
+                ?.extendedTextMessage
+                ?.text ||
+
+              msg.message
+                ?.imageMessage
+                ?.caption ||
+
+              msg.message
+                ?.videoMessage
+                ?.caption ||
+
+              '';
+
+            if (!text.trim()) {
+              continue;
+            }
+
+            console.log(
+              `WhatsApp -> FatherBot: ${from} ` +
+              `(${text.length} tekens)`
+            );
+
+            // Eerst laten weten dat
+            // FatherBot bezig is
+            await sock.sendMessage(
+              from,
+              {
+                text:
+                  '⏳ FatherBot verwerkt je opdracht…'
+              }
+            );
+
+            // Bericht naar bestaande
+            // FatherBot sturen
+            const reply =
+              await askFatherBot(
+                from,
+                text.trim()
+              );
+
+            // Antwoord FatherBot
+            // terug naar WhatsApp
+            await sock.sendMessage(
+              from,
+              {
+                text:
+                  String(reply)
+                    .slice(0, 12000)
+              }
+            );
+
+          } catch (err) {
+
+            console.error(
+              'Berichtfout:',
+              err?.message || err
+            );
+          }
+        }
+      }
+    );
+
+  } catch (err) {
+
+    console.error(
+      `${VERSION} startfout:`,
+      err
+    );
+
+    reconnect(10000);
+
+  } finally {
+
+    starting = false;
+  }
+}
+
+// ======================================================
+// START
+// ======================================================
+
 startBot();
-// ====================================================== // HEARTBEAT // ======================================================
-setInterval(() => { console.log( 💓 Heartbeat ${VERSION} - ${new Date().toISOString()} ); }, 30000);
-// ====================================================== // FOUTAFHANDELING // ======================================================
-process.on('unhandledRejection', (reason) => { console.error( '⚠️ Unhandled Promise Rejection:', reason ); });
-process.on('uncaughtException', (error) => { console.error( '⚠️ Uncaught Exception:', error ); });
+
+// ======================================================
+// HEARTBEAT
+// ======================================================
+
+setInterval(
+  () =>
+    console.log(
+      `Heartbeat ${VERSION} - ` +
+      new Date().toISOString()
+    ),
+  30000
+);
+
+// ======================================================
+// FOUTAFHANDELING
+// ======================================================
+
+process.on(
+  'unhandledRejection',
+  reason =>
+    console.error(
+      'Unhandled rejection:',
+      reason
+    )
+);
+
+process.on(
+  'uncaughtException',
+  error =>
+    console.error(
+      'Uncaught exception:',
+      error
+    )
+);

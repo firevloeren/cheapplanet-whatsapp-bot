@@ -1,52 +1,157 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal'); const express = require('express'); const P = require('pino');
-const app = express();
-app.get('/', (req, res) => { res.send('Bot V7 Baileys online - ' + new Date().toISOString()); });
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => { console.log('Webserver V7 online op ' + PORT); });
-async function startBot() { const { state, saveCreds } = await useMultiFileAuthState('/tmp/baileys_auth');
-const sock = makeWASocket({ auth: state, logger: P({ level: 'silent' }), printQRInTerminal: false });
-sock.ev.on('creds.update', saveCreds);
-sock.ev.on('connection.update', (update) => { const { connection, lastDisconnect, qr } = update;
-if (qr) {
-  console.log('===== QR CODE SCAN NU =====');
-  qrcode.generate(qr, { small: true });
-  console.log('===== EINDE QR =====');
-}
+error?.statusCode;
 
-if (connection === 'close') {
-  const shouldReconnect =
-    lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('');
+      console.log('⚠️ WhatsApp verbinding gesloten');
+      console.log('Statuscode:', statusCode || 'onbekend');
 
-  console.log('Verbinding gesloten, reconnect:', shouldReconnect);
+      if (lastDisconnect?.error) {
+        console.log(
+          'Reden:',
+          lastDisconnect.error?.message ||
+          String(lastDisconnect.error)
+        );
+      }
 
-  if (shouldReconnect) {
-    startBot();
+      const loggedOut =
+        statusCode === DisconnectReason.loggedOut;
+
+      if (loggedOut) {
+        console.log('');
+        console.log('❌ WhatsApp sessie is uitgelogd.');
+        console.log('➡️ Er is opnieuw een QR-scan nodig.');
+        console.log('');
+        return;
+      }
+
+      console.log('🔄 Automatisch opnieuw verbinden...');
+      scheduleReconnect(5000);
+    }
+
+  } catch (error) {
+    console.error(
+      '❌ connection.update fout:',
+      error?.message || error
+    );
   }
-} else if (connection === 'open') {
-  console.log('===== BOT V7 READY! =====');
-}
 });
-sock.ev.on('messages.upsert', async ({ messages }) => { for (const msg of messages) { if (!msg.message || msg.key.fromMe) continue;
-  const from = msg.key.remoteJid;
 
-  const text =
-    msg.message.conversation ||
-    msg.message.extendedTextMessage?.text ||
-    '';
+// ==================================================
+// BERICHTEN
+// ==================================================
 
-  console.log('Bericht van ' + from + ': ' + text);
+sock.ev.on('messages.upsert', async (event) => {
+  try {
+    const messages = event?.messages || [];
 
-  if (text.toLowerCase().includes('lijst')) {
-    await sock.sendMessage(from, {
-      text: '📋 Klanten: klant A, klant B'
-    });
-  } else {
-    await sock.sendMessage(from, {
-      text: `✅ V7 werkt! Je stuurde: ${text}`
-    });
+    for (const msg of messages) {
+      try {
+        if (!msg) continue;
+        if (!msg.message) continue;
+
+        // Geen reactie op eigen berichten
+        if (msg.key?.fromMe) {
+          continue;
+        }
+
+        const from = msg.key?.remoteJid;
+
+        if (!from) {
+          continue;
+        }
+
+        // WhatsApp statusmeldingen overslaan
+        if (from === 'status@broadcast') {
+          continue;
+        }
+
+        const text =
+          msg.message?.conversation ||
+          msg.message?.extendedTextMessage?.text ||
+          msg.message?.imageMessage?.caption ||
+          msg.message?.videoMessage?.caption ||
+          '';
+
+        console.log('');
+        console.log('📩 Nieuw WhatsApp bericht');
+        console.log('Van:', from);
+        console.log('Tekst:', text || '[geen tekst]');
+
+        // Geen tekst? Dan niets terugsturen.
+        if (!text) {
+          continue;
+        }
+
+        const lowerText = text
+          .trim()
+          .toLowerCase();
+
+        // TESTCOMMANDO: LIJST
+        if (lowerText.includes('lijst')) {
+          await sock.sendMessage(from, {
+            text:
+              '📋 Klanten\n\n' +
+              '• Klant A\n' +
+              '• Klant B\n\n' +
+              `✅ WhatsApp Bot ${VERSION}`
+          });
+
+          continue;
+        }
+
+        // TESTCOMMANDO: TEST
+        if (
+          lowerText === 'test' ||
+          lowerText === '/test'
+        ) {
+          await sock.sendMessage(from, {
+            text:
+             
+ ✅ ${VERSION} werkt!\n\n 
++
+              'WhatsApp is succesvol gekoppeld.'
+          });
+
+          continue;
+        }
+
+        // STANDAARD TESTANTWOORD
+        await sock.sendMessage(from, {
+          text:
+           
+ ✅ ${VERSION} werkt!\n\n 
++
+           
+ Je stuurde:\n${text}
+        });
+
+      } catch (messageError) {
+        console.error('');
+        console.error('❌ Bericht verwerken mislukt:');
+        console.error(
+          messageError?.message ||
+          messageError
+        );
+
+        // Belangrijk:
+        // één slecht bericht mag de hele bot niet stoppen
+        continue;
+      }
+    }
+
+  } catch (error) {
+    console.error(
+      '❌ messages.upsert fout:',
+      error?.message || error
+    );
   }
-}
-}); }
+});
+} catch (error) { console.error(''); console.error(❌ ${VERSION} STARTFOUT); console.error(error);
+scheduleReconnect(10000);
+} finally { starting = false; } }
+// ====================================================== // START // ======================================================
 startBot();
-setInterval(() => { console.log('Heartbeat V7 - ' + new Date().toISOString()); }, 30000);
+// ====================================================== // HEARTBEAT // ======================================================
+setInterval(() => { console.log( 💓 Heartbeat ${VERSION} - ${new Date().toISOString()} ); }, 30000);
+// ====================================================== // FOUTAFHANDELING // ======================================================
+process.on('unhandledRejection', (reason) => { console.error( '⚠️ Unhandled Promise Rejection:', reason ); });
+process.on('uncaughtException', (error) => { console.error( '⚠️ Uncaught Exception:', error ); });

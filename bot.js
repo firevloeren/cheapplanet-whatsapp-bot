@@ -1,12 +1,44 @@
-const { Client, LocalAuth } = require('whatsapp-web.js'); const qrcode = require('qrcode-terminal'); const fs = require('fs'); const path = require('path'); const express = require('express');
-const ADMIN_NUMBER = '31307850843@c.us'; const CLIENTS_FOLDER = '/tmp/clients';
-const app = express(); app.get('/', (req, res) => res.send('Bot is online - check Logs voor QR - ' + new Date())); app.get('/health', (req, res) => res.json({ status: 'ok', time: new Date() })); const PORT = process.env.PORT || 3000; app.listen(PORT, () => console.log('✅ Webserver online op port '+PORT));
-console.log('Starting WhatsApp client... v2 LIGHT');
-const client = new Client({ authStrategy: new LocalAuth({ dataPath: '/tmp/.wwebjs_auth' }), puppeteer: { headless: true, args: [ '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zygote', '--single-process', '--disable-gpu', '--disable-extensions' ] } });
-client.on('qr', (qr) => { console.log('========================================'); console.log('SCAN DEZE QR MET JE 06 43998066 TELEFOON:'); console.log('WhatsApp > Gekoppelde apparaten > Apparaat koppelen'); console.log('========================================'); qrcode.generate(qr, { small: true }); });
-client.on('ready', () => { console.log('✅✅✅ BOT IS READY! 06 43998066 is gekoppeld ✅✅✅'); });
-client.on('auth_failure', msg => { console.error('AUTH FAILURE', msg); });
-client.on('disconnected', (reason) => { console.log('Client disconnected', reason); });
-client.on('message', async (msg) => { try { if (!msg.from.includes('7850843')) return; const text = msg.body.toLowerCase().trim(); console.log(Command van baas ${msg.from}: ${msg.body}); if (text === '!help'  text === 'help'  text === '!status') { return msg.reply(🤖 *Webcreator Bot Online!*\n\n🎨 verander website klant 1 naar rood\n🖼️ foto + "voeg toe bij klant 1"\n📋 !klanten); } if (text === '!klanten') { try { if (!fs.existsSync(CLIENTS_FOLDER)) return msg.reply('Nog geen klanten map'); const folders = fs.readdirSync(CLIENTS_FOLDER); return msg.reply(📁 Klanten:\n${folders.map(f => - ${f}).join('\n')  'Geen klanten nog'}); } catch (e) { return msg.reply(Error: ${e.message}); } } if (text.includes('verander') && text.includes('naar')) { const klantMatch = text.match(/klant\s*(\d+|[\w]+)/); const kleurMatch = text.match(/naar\s+(\w+)/); if (!klantMatch  !kleurMatch) return msg.reply('❌ Probeer: verander website klant 1 naar rood'); const klant = klantMatch[0].replace(' ', ''); const kleur = kleurMatch[1]; return msg.reply(✅ Website van *${klant}* is nu *${kleur}*! 🎨 (demo)); } } catch (err) { console.error('Message handler error:', err); } });
-console.log('Initializing client...'); client.initialize().catch(err => { console.error('Failed to initialize client:', err); console.log('Bot blijft draaien voor webserver...'); });
-setInterval(() => { console.log('Bot heartbeat - ' + new Date().toISOString()); }, 60000);
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+const express = require('express');
+
+const app = express();
+app.get('/', (req, res) => res.send('Bot online ' + new Date()));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log('Webserver online ' + PORT));
+
+console.log('Starting client v3');
+
+const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: '/tmp/auth' }),
+    puppeteer: {
+        headless: true,
+        args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage','--single-process','--no-zygote','--disable-gpu']
+    }
+});
+
+client.on('qr', (qr) => {
+    console.log('SCAN QR VOOR 06 NUMMER:');
+    qrcode.generate(qr, { small: true });
+});
+
+client.on('ready', () => {
+    console.log('BOT READY!');
+});
+
+client.on('message', async (msg) => {
+    if (!msg.from.includes('7850843')) return;
+    console.log('Bericht: ' + msg.body);
+    if (msg.body.toLowerCase() === 'help') {
+        msg.reply('Bot werkt! Stuur: verander website klant 1 naar rood');
+    }
+    if (msg.body.toLowerCase().includes('verander') && msg.body.toLowerCase().includes('naar')) {
+        msg.reply('Website aangepast! (demo)');
+    }
+});
+
+client.initialize().catch(e => {
+    console.error('Init error', e);
+});
+
+setInterval(() => console.log('Alive ' + new Date().toISOString()), 60000);

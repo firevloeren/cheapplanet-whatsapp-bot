@@ -4,13 +4,14 @@ const {
   DisconnectReason
 } = require('@whiskeysockets/baileys');
 
-const qrcode = require('qrcode-terminal');
+const qrcodeTerminal = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const express = require('express');
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 
-const VERSION = 'V9-FATHERBOT-BRIDGE';
+const VERSION = 'V10-FATHERBOT-BRIDGE-QR-PAGE';
 
 const AUTH_DIR =
   process.env.AUTH_DIR ||
@@ -23,6 +24,11 @@ const WHATSAPP_BRIDGE_SECRET =
   (process.env.WHATSAPP_BRIDGE_SECRET || '').trim();
 
 fs.mkdirSync(AUTH_DIR, { recursive: true });
+
+let latestQr = '';
+let latestQrDataUrl = '';
+let latestQrUpdatedAt = null;
+let whatsappReady = false;
 
 // ======================================================
 // RENDER WEBSERVER
@@ -39,9 +45,35 @@ app.get('/', (_, res) =>
 app.get('/health', (_, res) =>
   res.json({
     status: 'ok',
-    version: VERSION
+    version: VERSION,
+    whatsappReady,
+    hasQr: Boolean(latestQrDataUrl),
+    qrUpdatedAt: latestQrUpdatedAt
   })
 );
+
+app.get('/qr', (_, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
+  if (whatsappReady) {
+    return res.send(`<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="5"><title>WhatsApp gekoppeld</title><style>
+body{margin:0;background:#07120c;color:#fff;font-family:system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box}.card{max-width:560px;width:100%;background:#0d2116;border:1px solid #285b3d;border-radius:24px;padding:28px;text-align:center;box-sizing:border-box}.ok{font-size:56px}.title{font-size:28px;font-weight:900;margin:8px 0}.muted{color:#b7c9bd;line-height:1.5}</style></head><body><main class="card"><div class="ok">✅</div><div class="title">WhatsApp is gekoppeld</div><p class="muted">${VERSION} is READY. Er hoeft geen QR-code meer gescand te worden.</p></main></body></html>`);
+  }
+
+  if (!latestQrDataUrl) {
+    return res.status(503).send(`<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="3"><title>QR wordt gemaakt</title><style>
+body{margin:0;background:#080808;color:#fff;font-family:system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box}.card{max-width:560px;width:100%;background:#111;border:1px solid #333;border-radius:24px;padding:28px;text-align:center;box-sizing:border-box}.title{font-size:26px;font-weight:900}.muted{color:#aaa;line-height:1.5}</style></head><body><main class="card"><div class="title">QR-code wordt geladen…</div><p class="muted">Deze pagina ververst automatisch.</p></main></body></html>`);
+  }
+
+  const updated = latestQrUpdatedAt ? new Date(latestQrUpdatedAt).toLocaleString('nl-NL') : '';
+  return res.send(`<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="20"><title>WhatsApp koppelen</title><style>
+*{box-sizing:border-box}body{margin:0;background:#070707;color:#fff;font-family:system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:grid;place-items:center;padding:18px}.card{width:min(640px,100%);background:#111;border:1px solid #2e2e2e;border-radius:24px;padding:22px;text-align:center}.brand{font-weight:950;font-size:15px;letter-spacing:.12em;color:#86efac;margin-bottom:8px}.title{font-size:28px;font-weight:950;margin:0 0 8px}.muted{color:#aaa;line-height:1.5;margin:0 auto 18px;max-width:520px}.qrbox{background:#fff;border-radius:20px;padding:14px;display:inline-block;max-width:100%}.qrbox img{display:block;width:min(480px,82vw);height:auto;image-rendering:auto}.small{color:#777;font-size:12px;margin-top:14px}.steps{margin:18px auto 0;text-align:left;max-width:520px;color:#ddd;line-height:1.7}.steps b{color:#fff}</style></head><body><main class="card"><div class="brand">WHATSAPP · ${VERSION}</div><h1 class="title">Scan deze QR-code</h1><p class="muted">Dit is altijd de meest recente QR-code van de WhatsApp-bot. De pagina ververst automatisch.</p><div class="qrbox"><img src="${latestQrDataUrl}" alt="Actuele WhatsApp QR-code"></div><div class="steps"><b>Op de WhatsApp-telefoon:</b><br>WhatsApp → Instellingen → Gekoppelde apparaten → Apparaat koppelen → scan deze code.</div><div class="small">QR bijgewerkt: ${updated}</div></main></body></html>`);
+});
 
 app.listen(
   process.env.PORT || 3000,
@@ -142,6 +174,7 @@ async function startBot() {
   if (starting) return;
 
   starting = true;
+  whatsappReady = false;
 
   try {
     const {
@@ -163,30 +196,39 @@ async function startBot() {
       syncFullHistory: false
     });
 
-    // Auth/sessie bewaren
     sock.ev.on(
       'creds.update',
       saveCreds
     );
 
-    // ==================================================
-    // VERBINDING
-    // ==================================================
-
     sock.ev.on(
       'connection.update',
-      ({
+      async ({
         connection,
         lastDisconnect,
         qr
       }) => {
 
         if (qr) {
+          latestQr = qr;
+          latestQrUpdatedAt = new Date().toISOString();
+          whatsappReady = false;
+
+          try {
+            latestQrDataUrl = await QRCode.toDataURL(qr, {
+              width: 900,
+              margin: 2,
+              errorCorrectionLevel: 'M'
+            });
+          } catch (err) {
+            console.error('QR afbeelding maken mislukt:', err?.message || err);
+          }
+
           console.log(
             '===== QR CODE SCAN NU ====='
           );
 
-          qrcode.generate(
+          qrcodeTerminal.generate(
             qr,
             { small: true }
           );
@@ -194,9 +236,15 @@ async function startBot() {
           console.log(
             '===== EINDE QR ====='
           );
+          console.log('Open /qr voor alleen de actuele QR-code.');
         }
 
         if (connection === 'open') {
+          whatsappReady = true;
+          latestQr = '';
+          latestQrDataUrl = '';
+          latestQrUpdatedAt = null;
+
           console.log(
             `===== ${VERSION} READY =====`
           );
@@ -220,6 +268,7 @@ async function startBot() {
             reconnect();
 
           } else {
+            whatsappReady = false;
             console.log(
               'WhatsApp is uitgelogd; ' +
               'nieuwe QR-scan vereist.'
@@ -228,10 +277,6 @@ async function startBot() {
         }
       }
     );
-
-    // ==================================================
-    // WHATSAPP BERICHTEN
-    // ==================================================
 
     sock.ev.on(
       'messages.upsert',
@@ -242,8 +287,6 @@ async function startBot() {
         ) {
 
           try {
-            // Geen leeg bericht
-            // en geen eigen berichten
             if (
               !msg?.message ||
               msg.key?.fromMe
@@ -261,8 +304,6 @@ async function startBot() {
               continue;
             }
 
-            // Tekst uit verschillende
-            // WhatsApp berichttypen halen
             const text =
               msg.message?.conversation ||
 
@@ -289,8 +330,6 @@ async function startBot() {
               `(${text.length} tekens)`
             );
 
-            // Eerst laten weten dat
-            // FatherBot bezig is
             await sock.sendMessage(
               from,
               {
@@ -299,16 +338,12 @@ async function startBot() {
               }
             );
 
-            // Bericht naar bestaande
-            // FatherBot sturen
             const reply =
               await askFatherBot(
                 from,
                 text.trim()
               );
 
-            // Antwoord FatherBot
-            // terug naar WhatsApp
             await sock.sendMessage(
               from,
               {
@@ -344,15 +379,7 @@ async function startBot() {
   }
 }
 
-// ======================================================
-// START
-// ======================================================
-
 startBot();
-
-// ======================================================
-// HEARTBEAT
-// ======================================================
 
 setInterval(
   () =>
@@ -362,10 +389,6 @@ setInterval(
     ),
   30000
 );
-
-// ======================================================
-// FOUTAFHANDELING
-// ======================================================
 
 process.on(
   'unhandledRejection',

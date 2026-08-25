@@ -11,7 +11,7 @@ const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 
-const VERSION = 'V11-FATHERBOT-PRIVATE-ADMIN-GUARD';
+const VERSION = 'V12-FATHERBOT-ADMIN-DIAGNOSTICS';
 
 const AUTH_DIR = process.env.AUTH_DIR || path.join(__dirname, 'baileys_auth');
 const FATHERBOT_BRIDGE_URL = (process.env.FATHERBOT_BRIDGE_URL || '').trim();
@@ -36,9 +36,36 @@ function senderPhone(jid) {
   return normalizePhone(left);
 }
 
-function isAdminSender(jid) {
-  const phone = senderPhone(jid);
-  return Boolean(phone && ADMIN_NUMBERS.has(phone));
+function messageSenderCandidates(msg) {
+  const key = msg?.key || {};
+  const raw = [
+    key.remoteJid,
+    key.remoteJidAlt,
+    key.participant,
+    key.participantAlt
+  ].filter(Boolean);
+
+  const seen = new Set();
+  const out = [];
+  for (const jid of raw) {
+    const phone = senderPhone(jid);
+    const id = `${jid}|${phone}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ jid: String(jid), phone });
+  }
+  return out;
+}
+
+function resolveAdminSender(msg) {
+  const candidates = messageSenderCandidates(msg);
+  for (const candidate of candidates) {
+    if (candidate.phone && ADMIN_NUMBERS.has(candidate.phone)) {
+      return { isAdmin: true, ...candidate, candidates };
+    }
+  }
+  const first = candidates[0] || { jid: '', phone: '' };
+  return { isAdmin: false, ...first, candidates };
 }
 
 let latestQrDataUrl = '';
@@ -192,10 +219,20 @@ async function startBot() {
           const from = msg.key?.remoteJid;
           if (!from || from === 'status@broadcast') continue;
 
+          const resolved = resolveAdminSender(msg);
+          const compactCandidates = resolved.candidates
+            .map(c => `${c.jid}=>${c.phone || 'geen-nummer'}`)
+            .join(' | ');
+
+          // Veilige diagnose: geen berichtinhoud, alleen technische afzender-ID's en adminstatus.
+          console.log(
+            `WhatsApp ontvangen | ADMIN=${resolved.isAdmin ? 'JA' : 'NEE'} | ` +
+            `gekozen=${resolved.phone || resolved.jid || 'onbekend'} | kandidaten=${compactCandidates || 'geen'}`
+          );
+
           // PRIVACY: gewone privécontacten worden volledig genegeerd.
-          // Geen botantwoord, geen FatherBot-doorsturing en geen technische melding.
-          if (!isAdminSender(from)) {
-            console.log(`Privébericht genegeerd door admin-guard: ${senderPhone(from) || 'onbekend'}`);
+          // Geen botantwoord, geen FatherBot-doorsturing en geen technische melding naar de afzender.
+          if (!resolved.isAdmin) {
             continue;
           }
 
@@ -208,7 +245,7 @@ async function startBot() {
 
           if (!text.trim()) continue;
 
-          console.log(`Beheerder -> FatherBot: ${from} (${text.length} tekens)`);
+          console.log(`Beheerder -> FatherBot: ${resolved.phone || from} (${text.length} tekens)`);
 
           await sock.sendMessage(from, {
             text: '⏳ FatherBot verwerkt je opdracht…'
